@@ -1,0 +1,104 @@
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+    provider = "mysql"
+    url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+    USER
+    ADMIN
+}
+
+model User {
+    id        Int      @id @default(autoincrement())
+    email     String   @unique
+    password  String
+    name      String?
+    avatar    String?  @db.VarChar(255)
+    role      UserRole @default(USER)
+    tokens    Token[]
+    posts     Post[]
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model Example {
+    id          Int      @id @default(autoincrement())
+    name        String
+    description String?
+    createdAt   DateTime @default(now())
+    updatedAt   DateTime @updatedAt
+}
+
+model Token {
+    id        Int      @id @default(autoincrement())
+    token     String   @unique
+    type      String
+    isRevoked Boolean  @default(false)
+    userId    Int
+    user      User     @relation(fields: [userId], references: [id])
+    expiresAt DateTime
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+
+    @@index([token, isRevoked])
+}
+
+model Post {
+    id          Int       @id @default(autoincrement())
+    title       String    @db.VarChar(255)
+    slug        String    @unique @db.VarChar(255)
+    content     String    @db.Text
+    excerpt     String?   @db.VarChar(500)
+    image       String?   @db.VarChar(255)
+    views       Int       @default(0)
+    status      String    @default("draft") // draft, published, archived
+    publishedAt DateTime?
+    authorId    Int
+    categoryId  Int
+
+    // Relations
+    author   User      @relation(fields: [authorId], references: [id], onDelete: Cascade)
+    category Category  @relation(fields: [categoryId], references: [id])
+    postTags PostTag[]
+
+    // Timestamps
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model Category {
+    id          Int     @id @default(autoincrement())
+    name        String  @unique @db.VarChar(100)
+    slug        String  @unique @db.VarChar(100)
+    description String? @db.VarChar(500)
+    posts       Post[]
+
+    // Timestamps
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model Tag {
+    id       Int       @id @default(autoincrement())
+    name     String    @unique @db.VarChar(100)
+    slug     String    @unique @db.VarChar(100)
+    postTags PostTag[]
+
+    // Timestamps
+    createdAt DateTime @default(now())
+    updatedAt DateTime @updatedAt
+}
+
+model PostTag {
+    postId     Int
+    tagId      Int
+    post       Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+    tag        Tag      @relation(fields: [tagId], references: [id])
+    assignedAt DateTime @default(now())
+
+    @@id([postId, tagId])
+}
