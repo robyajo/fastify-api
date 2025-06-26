@@ -4,6 +4,34 @@ import { authenticate } from "../middleware/auth";
 import { adminOnly } from "../middleware/admin";
 import { logInfo } from "../utils/logger";
 
+// Common schemas
+const unauthorizedResponse = {
+  type: "object",
+  properties: {
+    statusCode: { type: "number", default: 401 },
+    error: { type: "string", default: "Unauthorized" },
+    message: { type: "string" },
+  },
+};
+
+const forbiddenResponse = {
+  type: "object",
+  properties: {
+    statusCode: { type: "number", default: 403 },
+    error: { type: "string", default: "Forbidden" },
+    message: { type: "string" },
+  },
+};
+
+const notFoundResponse = {
+  type: "object",
+  properties: {
+    statusCode: { type: "number", default: 404 },
+    error: { type: "string", default: "Not Found" },
+    message: { type: "string" },
+  },
+};
+
 // Common user response schema
 const userResponseSchema = {
   type: "object",
@@ -172,8 +200,8 @@ export default async function userRoutes(fastify: FastifyInstance) {
           type: "array",
           items: userResponseSchema,
         },
-        401: { $ref: "unauthorized#" },
-        403: { $ref: "forbidden#" },
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
       },
     },
     preHandler: [authenticate, adminOnly],
@@ -185,8 +213,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
     schema: {
       response: {
         200: userResponseSchema,
-        401: { $ref: "unauthorized#" },
-        404: { $ref: "notFound#" },
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
+        404: notFoundResponse,
       },
     },
     preHandler: [authenticate],
@@ -195,7 +224,15 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
   // Get user by ID (Admin only)
   fastify.get<{ Params: { id: string } }>("/:id", {
-    schema: getUserSchema,
+    schema: {
+      ...getUserSchema,
+      response: {
+        200: userResponseSchema,
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
+        404: notFoundResponse,
+      },
+    },
     preHandler: [authenticate, adminOnly],
     handler: (request, reply) =>
       UserController.getUserById(
@@ -215,7 +252,31 @@ export default async function userRoutes(fastify: FastifyInstance) {
       role: "USER" | "ADMIN";
     };
   }>("/", {
-    schema: createUserSchema,
+    schema: {
+      ...createUserSchema,
+      response: {
+        201: userResponseSchema,
+        400: {
+          type: "object",
+          properties: {
+            error: { type: "string" },
+            message: { type: "string" },
+            details: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  field: { type: "string" },
+                  message: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
+      },
+    },
     preHandler: [authenticate, adminOnly],
     handler: (request, reply) => {
       // Ensure role has a default value before passing to controller
@@ -252,7 +313,32 @@ export default async function userRoutes(fastify: FastifyInstance) {
       role?: "USER" | "ADMIN";
     };
   }>("/:id", {
-    schema: updateUserSchema,
+    schema: {
+      ...updateUserSchema,
+      response: {
+        200: userResponseSchema,
+        400: {
+          type: "object",
+          properties: {
+            error: { type: "string" },
+            message: { type: "string" },
+            details: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  field: { type: "string" },
+                  message: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
+        404: notFoundResponse,
+      },
+    },
     preHandler: [authenticate],
     handler: (request, reply) =>
       UserController.updateUser(
@@ -306,8 +392,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
             },
           },
         },
-        403: { $ref: "forbidden#" },
-        404: { $ref: "notFound#" },
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
+        404: notFoundResponse,
       },
     },
     preHandler: [authenticate],
@@ -320,7 +407,21 @@ export default async function userRoutes(fastify: FastifyInstance) {
 
   // Delete user (Admin only)
   fastify.delete<{ Params: { id: string } }>("/:id", {
-    schema: deleteUserSchema,
+    schema: {
+      ...deleteUserSchema,
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            success: { type: "boolean" },
+            message: { type: "string" },
+          },
+        },
+        401: unauthorizedResponse,
+        403: forbiddenResponse,
+        404: notFoundResponse,
+      },
+    },
     preHandler: [authenticate, adminOnly],
     handler: (request, reply) =>
       UserController.deleteUser(

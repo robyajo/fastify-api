@@ -1,9 +1,9 @@
 import { FastifyRequest, FastifyReply } from 'fastify';
 import { UserService } from '../services/userService';
 import { logError, logInfo } from '../utils/logger';
-import { handleFileUpload } from '../utils/fileUpload';
 import { loginSchema, registerSchema, LoginInput, RegisterInput } from '../validations/authValidation';
 import { z } from 'zod';
+import { MultipartFile } from '@fastify/multipart';
 
 const userService = new UserService();
 
@@ -59,42 +59,89 @@ export class AuthController {
   }
 
   static async register(
-    request: FastifyRequest<{ Body: RegisterInput }>,
+    request: FastifyRequest<{ Body: any }>,
     reply: FastifyReply,
     fastify: any
   ) {
     try {
-      logInfo('Registration attempt', {
-        email: request.body?.email,
-        name: request.body?.name,
-      });
+      const body = request.body || {};
+      const email = typeof body === 'object' && 'email' in body ? String(body.email) : 'unknown';
+      const name = typeof body === 'object' && 'name' in body ? String(body.name) : 'unknown';
+      
+      logInfo('Registration attempt', { email, name });
+
+      let avatarUrl: string | undefined;
+      let registerData = request.body ? { ...request.body } : {};
 
       // Handle file upload if present
-      let avatarUrl: string | undefined;
-
-      // Check if this is a multipart form data request (file upload)
       if (request.isMultipart()) {
         try {
-          const fileData = await (request as any).file();
-          if (fileData) {
-            const { fileUrl } = await handleFileUpload(request as any, 0);
-            avatarUrl = fileUrl;
+          const parts = request.parts();
+          const formData: Record<string, any> = {};
+          
+          for await (const part of parts) {
+            if (part.type === 'file' && part.filename) {
+              // Handle file upload
+              const fileName = `${Date.now()}-${part.filename}`;
+              const fs = require('fs');
+              const path = require('path');
+              
+              // Ensure upload directory exists
+              const uploadDir = path.join(__dirname, '../../storage/uploads');
+              if (!fs.existsSync(uploadDir)) {
+                fs.mkdirSync(uploadDir, { recursive: true });
+              }
+              
+              const filePath = path.join(uploadDir, fileName);
+              await fs.promises.writeFile(filePath, await part.toBuffer());
+              
+              // Set the avatar URL
+              avatarUrl = `/uploads/${fileName}`;
+            } else if (part.type === 'field') {
+              // Handle form fields
+              formData[part.fieldname] = part.value;
+            }
           }
+          
+          // Update registerData with form fields
+          registerData = {
+            ...registerData,
+            ...formData
+          };
+          
         } catch (uploadError) {
           logError('Error processing file upload during registration', uploadError);
-          // Continue without avatar if upload fails
+          return reply.status(400).send({
+            error: 'File Upload Error',
+            message: 'Failed to process uploaded file',
+            details: uploadError instanceof Error ? uploadError.message : 'Unknown error'
+          });
         }
       }
 
-      // Validate request body (excluding file upload)
-      const validatedData = registerSchema.parse(request.body);
+      // Validate the registration data
+      const validatedData = registerSchema.safeParse(registerData);
+      
+      if (!validatedData.success) {
+        const errorDetails = validatedData.error.errors.map(err => ({
+          field: err.path.join('.'),
+          message: err.message
+        }));
+        
+        logError('Validation error during registration', validatedData.error);
+        return reply.status(400).send({
+          error: 'Validation Error',
+          message: 'Invalid registration data',
+          details: errorDetails
+        });
+      }
       
       // Prepare user data with validated input and optional avatar
       const userData = {
-        ...validatedData,
-        ...(avatarUrl ? { avatar: avatarUrl } : {}),
-        // Remove confirmPassword before saving
-        confirmPassword: undefined
+        name: validatedData.data.name,
+        email: validatedData.data.email,
+        password: validatedData.data.password,
+        ...(avatarUrl && { avatar: avatarUrl })
       };
 
       const user = await userService.createUser(userData);
@@ -138,7 +185,11 @@ export class AuthController {
       }
       
       const errorMessage = error instanceof Error ? error.message : 'Failed to register user';
-      logError('Registration failed', error, { email: request.body?.email });
+      const email = request.body && typeof request.body === 'object' && 'email' in request.body 
+        ? String(request.body.email) 
+        : 'unknown';
+      
+      logError('Registration failed', error, { email });
 
       reply.status(400).send({
         error: 'Registration failed',

@@ -98,10 +98,38 @@ export default async function authRoutes(fastify: FastifyInstance) {
     },
   });
 
-  // Register
-  fastify.post<{ Body: RegisterInput }>('/register', {
+  // Register endpoint with file upload support
+  fastify.post<{ Body: any }>('/register', {
     schema: {
-      body: zodToJsonSchema(registerSchema),
+      consumes: ['multipart/form-data', 'application/json'],
+      body: {
+        oneOf: [
+          {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              email: { type: 'string', format: 'email' },
+              password: { type: 'string', minLength: 6 },
+              confirmPassword: { type: 'string' },
+              // For JSON requests
+              avatar: { type: 'string', format: 'uri', nullable: true }
+            },
+            required: ['name', 'email', 'password', 'confirmPassword']
+          },
+          {
+            type: 'object',
+            properties: {
+              name: { type: 'string' },
+              email: { type: 'string', format: 'email' },
+              password: { type: 'string', minLength: 6 },
+              confirmPassword: { type: 'string' },
+              // For file uploads
+              avatar: { type: 'string', format: 'binary' }
+            },
+            required: ['name', 'email', 'password', 'confirmPassword']
+          }
+        ]
+      },
       response: {
         201: {
           type: 'object',
@@ -130,11 +158,39 @@ export default async function authRoutes(fastify: FastifyInstance) {
       }
     },
     handler: async (request, reply) => {
-      return AuthController.register(
-        request as FastifyRequest<{ Body: RegisterInput }>,
-        reply,
-        fastify
-      );
+      try {
+        // Validate request body based on content type
+        const contentType = request.headers['content-type'] || '';
+        
+        if (contentType.includes('application/json')) {
+          // For JSON requests, validate against the Zod schema
+          const result = registerSchema.safeParse(request.body);
+          if (!result.success) {
+            const errorDetails = result.error.errors.map(err => ({
+              field: err.path.join('.'),
+              message: err.message
+            }));
+            return reply.status(400).send({
+              error: 'Validation Error',
+              message: 'Invalid registration data',
+              details: errorDetails
+            });
+          }
+        }
+        
+        // Process the request in the controller
+        return AuthController.register(
+          request as FastifyRequest<{ Body: any }>,
+          reply,
+          fastify
+        );
+      } catch (error) {
+        request.log.error('Error in register handler:', error);
+        return reply.status(500).send({
+          error: 'Internal Server Error',
+          message: 'An unexpected error occurred'
+        });
+      }
     },
   });
 }
