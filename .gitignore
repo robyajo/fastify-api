@@ -20,12 +20,12 @@ build/
 *.sqlite
 
 # Logs
-# logs
-# *.log
-# lerna-debug.log*
-# storage/img/avatar
-# storage/avatars
-# storage/logs
+logs
+*.log
+lerna-debug.log*
+storage/img/avatar
+storage/avatars
+storage/logs
 
 # Runtime data
 pids
