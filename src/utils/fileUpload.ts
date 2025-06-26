@@ -1,17 +1,17 @@
-import { FastifyRequest } from 'fastify';
-import { randomUUID } from 'crypto';
-import * as fs from 'fs';
+import { FastifyRequest } from "fastify";
+import { randomUUID } from "crypto";
+import * as fs from "fs";
 const { createWriteStream, existsSync, mkdirSync, unlinkSync } = fs;
-import { join } from 'path';
-import { promisify } from 'util';
-import { pipeline } from 'stream';
-import { logError, logInfo } from './logger';
-import { MultipartFile } from '@fastify/multipart';
+import { join } from "path";
+import { promisify } from "util";
+import { pipeline } from "stream";
+import { logError, logInfo } from "./logger";
+import { MultipartFile } from "@fastify/multipart";
 
 const pump = promisify(pipeline);
 
 // Ensure upload directory exists
-const UPLOAD_DIR = join(process.cwd(), 'storage', 'avatars');
+const UPLOAD_DIR = join(process.cwd(), "storage", "avatars");
 if (!existsSync(UPLOAD_DIR)) {
   mkdirSync(UPLOAD_DIR, { recursive: true });
 }
@@ -36,21 +36,21 @@ export async function handleFileUpload(
 ): Promise<FileUploadResult> {
   try {
     const data = await req.file();
-    
+
     if (!data) {
-      throw new Error('No file uploaded');
+      throw new Error("No file uploaded");
     }
-    
+
     // Check if the uploaded file is an image
-    if (!data.mimetype?.startsWith('image/')) {
-      throw new Error('Only image files are allowed');
+    if (!data.mimetype?.startsWith("image/")) {
+      throw new Error("Only image files are allowed");
     }
-    
+
     // Generate a unique filename with user ID
-    const fileExt = data.filename.split('.').pop();
+    const fileExt = data.filename.split(".").pop();
     const fileName = `user_${userId}_${randomUUID()}.${fileExt}`;
     const filePath = join(UPLOAD_DIR, fileName);
-    const fileUrl = `/storage/avatars/${fileName}`;
+    const fileUrl = `/src/storage/avatars/${fileName}`;
 
     // Save the file using stream with size limit
     const writeStream = createWriteStream(filePath);
@@ -58,10 +58,12 @@ export async function handleFileUpload(
     const maxSize = 5 * 1024 * 1024; // 5MB
 
     // Handle data events to track file size
-    data.file.on('data', (chunk: Buffer) => {
+    data.file.on("data", (chunk: Buffer) => {
       fileSize += chunk.length;
       if (fileSize > maxSize) {
-        writeStream.destroy(new Error('File size exceeds the maximum allowed limit of 5MB'));
+        writeStream.destroy(
+          new Error("File size exceeds the maximum allowed limit of 5MB")
+        );
         return;
       }
       writeStream.write(chunk);
@@ -69,12 +71,12 @@ export async function handleFileUpload(
 
     // Handle stream events
     await new Promise<void>((resolve, reject) => {
-      data.file.on('end', () => {
+      data.file.on("end", () => {
         writeStream.end();
         resolve();
       });
 
-      writeStream.on('error', (error) => {
+      writeStream.on("error", (error) => {
         // Clean up the file if there was an error
         if (existsSync(filePath)) {
           fs.unlinkSync(filePath);
@@ -82,21 +84,21 @@ export async function handleFileUpload(
         reject(error);
       });
 
-      writeStream.on('finish', () => {
+      writeStream.on("finish", () => {
         writeStream.close();
       });
     });
 
     logInfo(`File uploaded successfully: ${fileName}`);
-    
+
     return {
       filePath,
       fileName,
-      fileUrl
+      fileUrl,
     };
   } catch (error) {
-    logError('Error uploading file', error);
-    throw new Error('Failed to upload file');
+    logError("Error uploading file", error);
+    throw new Error("Failed to upload file");
   }
 }
 

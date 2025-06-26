@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/Users/roby/SOURCE ROBY/GITHUB/fastify-api/storage/logs/.3df7a0591f10e70ae60aaadbe76ab11a47dec035-audit.json",
+    "files": [
+        {
+            "date": 1750918194750,
+            "name": "/Users/roby/SOURCE ROBY/GITHUB/fastify-api/storage/logs/application-2025-06-26.log",
+            "hash": "6ab216b080efd68c544ea3f49093ca897492abf1161692ca6bb7f073ea5f951c"
+        }
+    ],
+    "hashType": "sha256"
+}

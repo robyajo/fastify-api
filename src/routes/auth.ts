@@ -1,153 +1,140 @@
-import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { UserService } from '../services/userService';
-import { LoginRequest, CreateUserRequest } from '../types';
-import { logError, logInfo } from '../utils/logger';
-import { handleFileUpload } from '../utils/fileUpload';
+import { FastifyInstance, FastifyRequest } from 'fastify';
+import { AuthController } from '../controllers/authController';
+import { loginSchema, registerSchema, type LoginInput, type RegisterInput } from '../validations/authValidation';
+import { z } from 'zod';
 
-const userService = new UserService();
-
-const loginSchema = {
-  body: {
-    type: 'object',
-    required: ['email', 'password'],
-    properties: {
-      email: { type: 'string', format: 'email' },
-      password: { type: 'string', minLength: 6 }
-    }
-  },
-  response: {
-    200: {
-      type: 'object',
-      properties: {
-        token: { type: 'string' },
-        user: {
-          type: 'object',
-          properties: {
-            id: { type: 'number' },
-            email: { type: 'string' },
-            name: { type: 'string' },
-            avatar: { type: 'string' },
-            role: { type: 'string' },
-            createdAt: { type: 'string' },
-            updatedAt: { type: 'string' }
-          }
-        }
-      }
-    }
+// Common user response schema
+const userResponseSchema = {
+  type: 'object',
+  properties: {
+    id: { type: 'number' },
+    name: { type: 'string' },
+    email: { type: 'string', format: 'email' },
+    avatar: { type: 'string', nullable: true },
+    role: { type: 'string', enum: ['USER', 'ADMIN'] },
+    createdAt: { type: 'string', format: 'date-time' },
+    updatedAt: { type: 'string', format: 'date-time' }
   }
 };
 
-const registerSchema = {
-  body: {
+// Helper type for Zod field shape
+type ZodFieldShape = {
+  _def: {
+    typeName: string;
+    checks?: Array<{ kind: string }>;
+    minLength?: { value: number };
+    values?: string[];
+  };
+  isOptional?: () => boolean;
+};
+
+// Convert Zod schema to JSON Schema for Fastify
+const zodToJsonSchema = (zodSchema: z.ZodTypeAny) => {
+  const jsonSchema = (zodSchema as any)._def.schema || zodSchema;
+  const shape = (jsonSchema as any).shape as Record<string, ZodFieldShape>;
+  
+  return {
     type: 'object',
-    required: ['email', 'password', 'name'],
-    properties: {
-      email: { type: 'string', format: 'email' },
-      password: { type: 'string', minLength: 6 },
-      name: { type: 'string', minLength: 2 },
-      avatar: { type: 'string' },
-      role: { type: 'string', enum: ['USER', 'ADMIN'] }
-    }
-  }
+    properties: Object.entries(shape).reduce((acc, [key, field]) => {
+      acc[key] = {
+        type: field._def.typeName === 'ZodString' ? 'string' : 'object',
+        ...(field._def.checks?.some((c) => c.kind === 'email') && { format: 'email' }),
+        ...(field._def.minLength && { minLength: field._def.minLength.value }),
+        ...(field._def.values && { enum: field._def.values })
+      };
+      return acc;
+    }, {} as Record<string, any>),
+    required: Object.entries(shape)
+      .filter(([_, field]) => !field.isOptional?.())
+      .map(([key]) => key)
+  };
 };
 
 export default async function authRoutes(fastify: FastifyInstance) {
   // Login
-  fastify.post<{ Body: LoginRequest }>('/login', {
-    schema: loginSchema,
-    handler: async (request, reply) => {
-      try {
-        logInfo('Login attempt', { email: request.body.email });
-        const user = await userService.loginUser(request.body);
-        
-        const token = fastify.jwt.sign({
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role
-        });
-
-        logInfo('Login successful', { userId: user.id, email: user.email });
-        
-        reply.send({
-          token,
-          user
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logError('Login failed', error, { email: request.body.email });
-        
-        reply.status(401).send({
-          error: 'Authentication failed',
-          message: errorMessage
-        });
+  fastify.post<{ Body: LoginInput }>('/login', {
+    schema: {
+      body: zodToJsonSchema(loginSchema),
+      response: {
+        200: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+            user: userResponseSchema
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' },
+            details: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  field: { type: 'string' },
+                  message: { type: 'string' }
+                }
+              }
+            }
+          }
+        },
+        401: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' }
+          }
+        }
       }
-    }
+    },
+    handler: async (request, reply) => {
+      return AuthController.login(
+        request as FastifyRequest<{ Body: LoginInput }>,
+        reply,
+        fastify
+      );
+    },
   });
 
   // Register
-  fastify.post<{ Body: CreateUserRequest }>('/register', {
-    schema: registerSchema,
-    handler: async (request: FastifyRequest<{ Body: CreateUserRequest }>, reply: FastifyReply) => {
-      try {
-        logInfo('Registration attempt', { email: request.body.email, name: request.body.name });
-        
-        // Handle file upload if present
-        let avatarUrl: string | undefined;
-        
-        // Check if this is a multipart form data request (file upload)
-        if (request.isMultipart()) {
-          try {
-            const fileData = await (request as any).file();
-            if (fileData) {
-              const { fileUrl } = await handleFileUpload(request as any, 0); // 0 is a temporary user ID, will be updated
-              avatarUrl = fileUrl;
+  fastify.post<{ Body: RegisterInput }>('/register', {
+    schema: {
+      body: zodToJsonSchema(registerSchema),
+      response: {
+        201: {
+          type: 'object',
+          properties: {
+            token: { type: 'string' },
+            user: userResponseSchema
+          }
+        },
+        400: {
+          type: 'object',
+          properties: {
+            error: { type: 'string' },
+            message: { type: 'string' },
+            details: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  field: { type: 'string' },
+                  message: { type: 'string' }
+                }
+              }
             }
-          } catch (uploadError) {
-            logError('Error processing file upload during registration', uploadError);
-            // Don't fail the registration if file upload fails
           }
         }
-        
-        // Create user with or without avatar
-        const userData: CreateUserRequest = {
-          ...request.body,
-          ...(avatarUrl ? { avatar: avatarUrl } : {}) // Only add avatar if it was uploaded
-        };
-        
-        const user = await userService.createUser(userData);
-        
-        // If we have a file but no user ID yet, update the user with the correct avatar URL
-        if (avatarUrl && user.id) {
-          const updatedAvatarUrl = avatarUrl.replace('user_0_', `user_${user.id}_`);
-          await userService.updateUser(user.id, { avatar: updatedAvatarUrl });
-          
-          // Update the user object with the final avatar URL
-          (user as any).avatar = updatedAvatarUrl;
-        }
-        
-        const token = fastify.jwt.sign({
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role
-        });
-
-        logInfo('Registration successful', { userId: user.id, email: user.email });
-        
-        reply.status(201).send({
-          token,
-          user
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logError('Registration failed', error, { email: request.body.email });
-        
-        reply.status(400).send({
-          error: 'Registration failed',
-          message: errorMessage
-        });
       }
-    }
+    },
+    handler: async (request, reply) => {
+      return AuthController.register(
+        request as FastifyRequest<{ Body: RegisterInput }>,
+        reply,
+        fastify
+      );
+    },
   });
 }

@@ -1,297 +1,331 @@
-import { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { authenticate, adminOnly } from '../middleware/auth';
-import { UserService } from '../services/userService';
-import { CreateUserRequest, UpdateUserRequest } from '../types';
-import { logError, logInfo } from '../utils/logger';
-import { handleFileUpload, getAvatarUrl } from '../utils/fileUpload';
-const userService = new UserService();
+import { FastifyInstance, FastifyRequest } from "fastify";
+import { UserController } from "../controllers/userController";
+import { authenticate } from "../middleware/auth";
+import { adminOnly } from "../middleware/admin";
+import { logInfo } from "../utils/logger";
 
-const userSchema = {
-  type: 'object',
+// Common user response schema
+const userResponseSchema = {
+  type: "object",
   properties: {
-    id: { type: 'number' },
-    email: { type: 'string' },
-    name: { type: 'string' },
-    avatar: { type: 'string' },
-    role: { type: 'string' },
-    createdAt: { type: 'string' },
-    updatedAt: { type: 'string' }
-  }
+    id: { type: "number" },
+    name: { type: "string" },
+    email: { type: "string", format: "email" },
+    avatar: { type: "string", nullable: true },
+    role: { type: "string", enum: ["USER", "ADMIN"] },
+    createdAt: { type: "string", format: "date-time" },
+    updatedAt: { type: "string", format: "date-time" },
+  },
 };
 
-const createUserSchema = {
-  body: {
-    type: 'object',
-    required: ['email', 'password', 'name'],
-    properties: {
-      email: { type: 'string', format: 'email' },
-      password: { type: 'string', minLength: 6 },
-      name: { type: 'string', minLength: 2 },
-      avatar: { type: 'string' },
-      role: { type: 'string', enum: ['USER', 'ADMIN'] }
-    }
-  },
-  response: {
-    201: userSchema
-  }
-};
-
-const updateUserSchema = {
-  params: {
-    type: 'object',
-    properties: {
-      id: { type: 'string' }
-    }
-  },
-  body: {
-    type: 'object',
-    properties: {
-      email: { type: 'string', format: 'email' },
-      name: { type: 'string', minLength: 2 },
-      avatar: { type: 'string' },
-      role: { type: 'string', enum: ['USER', 'ADMIN'] }
-    }
-  },
-  response: {
-    200: userSchema
-  }
-};
-
+// Schema for getting a single user
 const getUserSchema = {
   params: {
-    type: 'object',
+    type: "object",
+    required: ["id"],
     properties: {
-      id: { type: 'string' }
-    }
+      id: { type: "string", pattern: "^\\d+$" },
+    },
   },
   response: {
-    200: userSchema
-  }
+    200: userResponseSchema,
+    404: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+  },
 };
 
+// Schema for creating a user
+const createUserSchema = {
+  body: {
+    type: "object",
+    required: ["name", "email", "password", "confirmPassword"],
+    properties: {
+      name: { type: "string", minLength: 2 },
+      email: { type: "string", format: "email" },
+      password: { type: "string", minLength: 6 },
+      confirmPassword: { type: "string", minLength: 6 },
+      avatar: { type: "string", nullable: true },
+      role: { type: "string", enum: ["USER", "ADMIN"], default: "USER" },
+    },
+  },
+  response: {
+    201: userResponseSchema,
+    400: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+        details: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string" },
+              message: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
+// Schema for updating a user
+const updateUserSchema = {
+  params: {
+    type: "object",
+    required: ["id"],
+    properties: {
+      id: { type: "string", pattern: "^\\d+$" },
+    },
+  },
+  body: {
+    type: "object",
+    properties: {
+      name: { type: "string", minLength: 2 },
+      email: { type: "string", format: "email" },
+      avatar: { type: "string", nullable: true },
+      role: { type: "string", enum: ["USER", "ADMIN"] },
+    },
+  },
+  response: {
+    200: userResponseSchema,
+    400: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+        details: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string" },
+              message: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+    403: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+    404: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+  },
+};
+
+// Schema for deleting a user
 const deleteUserSchema = {
   params: {
-    type: 'object',
+    type: "object",
+    required: ["id"],
     properties: {
-      id: { type: 'string' }
-    }
+      id: { type: "string", pattern: "^\\d+$" },
+    },
   },
   response: {
     200: {
-      type: 'object',
+      type: "object",
       properties: {
-        message: { type: 'string' }
-      }
-    }
-  }
+        success: { type: "boolean" },
+        message: { type: "string" },
+      },
+    },
+    403: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+    404: {
+      type: "object",
+      properties: {
+        error: { type: "string" },
+        message: { type: "string" },
+      },
+    },
+  },
 };
 
 export default async function userRoutes(fastify: FastifyInstance) {
   // Get all users (Admin only)
-  fastify.get('/users', {
+  fastify.get("/users", {
     schema: {
       response: {
         200: {
-          type: 'array',
-          items: userSchema
-        }
-      }
+          type: "array",
+          items: userResponseSchema,
+        },
+        401: { $ref: "unauthorized#" },
+        403: { $ref: "forbidden#" },
+      },
     },
     preHandler: [authenticate, adminOnly],
-    handler: async (request, reply) => {
-      try {
-        logInfo('Fetching all users');
-        const users = await userService.getAllUsers();
-        logInfo(`Successfully fetched ${users.length} users`);
-        reply.send(users);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logError('Error fetching users', error);
-        reply.status(500).send({
-          error: 'Internal server error',
-          message: errorMessage
-        });
-      }
-    }
+    handler: (request, reply) => UserController.getAllUsers(request, reply),
   });
 
   // Get current user profile
-  fastify.get('/profile', {
-    preHandler: [authenticate],
+  fastify.get("/profile", {
     schema: {
       response: {
-        200: userSchema
-      }
+        200: userResponseSchema,
+        401: { $ref: "unauthorized#" },
+        404: { $ref: "notFound#" },
+      },
     },
-    handler: async (request, reply) => {
-      try {
-        const userId = request.user!.id;
-        logInfo(`Fetching profile for user ID: ${userId}`);
-        const user = await userService.getUserById(userId);
-        logInfo(`Successfully fetched profile for user: ${user.email}`);
-        reply.send(user);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logError('Error fetching user profile', error);
-        reply.status(404).send({
-          error: 'User not found',
-          message: errorMessage
-        });
-      }
-    }
+    preHandler: [authenticate],
+    handler: (request, reply) => UserController.getProfile(request, reply),
   });
+
   // Get user by ID (Admin only)
-  fastify.get<{ Params: { id: string } }>('/:id', {
+  fastify.get<{ Params: { id: string } }>("/:id", {
     schema: getUserSchema,
     preHandler: [authenticate, adminOnly],
-    handler: async (request, reply) => {
-      const userId = request.params.id;
-      try {
-        logInfo(`Fetching user with ID: ${userId}`);
-        const user = await userService.getUserById(Number(userId));
-        if (!user) {
-          logError(`User not found with ID: ${userId}`, new Error('User not found'));
-          return reply.status(404).send({ error: 'User not found' });
-        }
-        logInfo(`Successfully fetched user: ${user.email}`);
-        reply.send(user);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logError(`Error fetching user with ID ${userId}`, error);
-        reply.status(404).send({
-          error: 'User not found',
-          message: errorMessage
-        });
-      }
-    }
+    handler: (request, reply) =>
+      UserController.getUserById(
+        request as FastifyRequest<{ Params: { id: string } }>,
+        reply
+      ),
   });
 
   // Create user (Admin only)
-  fastify.post<{ Body: CreateUserRequest }>('/', {
+  fastify.post<{
+    Body: {
+      name: string;
+      email: string;
+      password: string;
+      confirmPassword: string;
+      avatar?: string;
+      role: "USER" | "ADMIN";
+    };
+  }>("/", {
     schema: createUserSchema,
     preHandler: [authenticate, adminOnly],
-    handler: async (request, reply) => {
-      try {
-        logInfo(`Creating new user with email: ${request.body.email}`);
-        const user = await userService.createUser(request.body);
-        logInfo(`Successfully created user with ID: ${user.id}`);
-        reply.status(201).send(user);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Failed to create user';
-        logError('Error creating user', error);
-        reply.status(400).send({
-          error: 'Bad Request',
-          message: errorMessage
-        });
-      }
-    }
+    handler: (request, reply) => {
+      // Ensure role has a default value before passing to controller
+      const bodyWithDefaultRole = {
+        ...request.body,
+        role: request.body.role || "USER",
+      };
+
+      const typedRequest = {
+        ...request,
+        body: bodyWithDefaultRole,
+      } as FastifyRequest<{
+        Body: {
+          name: string;
+          email: string;
+          password: string;
+          confirmPassword: string;
+          avatar?: string;
+          role: "USER" | "ADMIN";
+        };
+      }>;
+
+      return UserController.createUser(typedRequest, reply);
+    },
   });
 
   // Update user
-  fastify.put<{ Params: { id: string }; Body: UpdateUserRequest }>('/:id', {
+  fastify.put<{
+    Params: { id: string };
+    Body: {
+      name?: string;
+      email?: string;
+      avatar?: string;
+      role?: "USER" | "ADMIN";
+    };
+  }>("/:id", {
     schema: updateUserSchema,
     preHandler: [authenticate],
-    handler: async (request, reply) => {
-      const userId = parseInt(request.params.id);
-      try {
-        // Users can only update their own profile unless they're admin
-        if (request.user!.role !== 'ADMIN' && request.user!.id !== userId) {
-          logError(`Unauthorized update attempt by user ${request.user!.id} for user ${userId}`, new Error('Forbidden'));
-          reply.status(403).send({
-            error: 'Forbidden',
-            message: 'You can only update your own profile'
-          });
-          return;
-        }
-
-        logInfo(`Updating user with ID: ${userId}`, { updates: request.body });
-        const user = await userService.updateUser(userId, request.body);
-        logInfo(`Successfully updated user with ID: ${userId}`);
-        reply.send(user);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Failed to update user';
-        logError(`Error updating user ID ${userId}`, error);
-        reply.status(400).send({
-          error: 'Failed to update user',
-          message: errorMessage
-        });
-      }
-    }
+    handler: (request, reply) =>
+      UserController.updateUser(
+        request as FastifyRequest<{
+          Params: { id: string };
+          Body: {
+            name?: string;
+            email?: string;
+            avatar?: string;
+            role?: "USER" | "ADMIN";
+          };
+        }>,
+        reply
+      ),
   });
 
   // Upload user avatar
-  fastify.post<{ Params: { id: string } }>('/:id/avatar', {
-    preHandler: [authenticate],
-    handler: async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-      const userId = parseInt(request.params.id);
-      
-      // Check if user is updating their own avatar or is admin
-      if (request.user!.role !== 'ADMIN' && request.user!.id !== userId) {
-        logError(`Unauthorized avatar update attempt by user ${request.user!.id} for user ${userId}`, new Error('Forbidden'));
-        return reply.status(403).send({
-          error: 'Forbidden',
-          message: 'You can only update your own avatar'
-        });
-      }
-
-      try {
-        logInfo(`Uploading avatar for user ID: ${userId}`);
-        
-        // Check if the request is multipart/form-data
-        if (!request.isMultipart()) {
-          logError('Upload request is not multipart', new Error('Invalid content type'));
-          return reply.status(400).send({
-            error: 'Bad Request',
-            message: 'Request must be multipart/form-data',
+  fastify.post<{ Params: { id: string } }>("/:id/avatar", {
+    schema: {
+      params: {
+        type: "object",
+        required: ["id"],
+        properties: {
+          id: { type: "string", pattern: "^\\d+$" },
+        },
+      },
+      consumes: ["multipart/form-data"],
+      response: {
+        200: {
+          type: "object",
+          properties: {
+            success: { type: "boolean" },
+            avatarUrl: { type: "string" },
+            user: userResponseSchema,
+          },
+        },
+        400: {
+          type: "object",
+          properties: {
+            error: { type: "string" },
+            message: { type: "string" },
             details: {
-              required: 'multipart/form-data',
-              received: request.headers['content-type']
-            }
-          });
-        }
-
-        // Handle file upload
-        const { fileUrl } = await handleFileUpload(request, userId);
-        
-        // Update user with new avatar URL
-        const user = await userService.updateUser(userId, { avatar: fileUrl });
-        
-        logInfo(`Successfully uploaded avatar for user ID: ${userId}`, { fileUrl });
-        reply.send({
-          success: true,
-          avatarUrl: fileUrl,
-          user
-        });
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Failed to upload avatar';
-        logError(`Error uploading avatar for user ID ${userId}`, error);
-        reply.status(400).send({
-          error: 'Bad Request',
-          message: errorMessage
-        });
-      }
-    }
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  field: { type: "string" },
+                  message: { type: "string" },
+                },
+              },
+            },
+          },
+        },
+        403: { $ref: "forbidden#" },
+        404: { $ref: "notFound#" },
+      },
+    },
+    preHandler: [authenticate],
+    handler: (request, reply) =>
+      UserController.uploadAvatar(
+        request as FastifyRequest<{ Params: { id: string } }>,
+        reply
+      ),
   });
 
   // Delete user (Admin only)
-  fastify.delete<{ Params: { id: string } }>('/:id', {
+  fastify.delete<{ Params: { id: string } }>("/:id", {
     schema: deleteUserSchema,
     preHandler: [authenticate, adminOnly],
-    handler: async (request, reply) => {
-      const userId = parseInt(request.params.id);
-      try {
-        logInfo(`Deleting user with ID: ${userId}`);
-        const result = await userService.deleteUser(userId);
-        logInfo(`Successfully deleted user with ID: ${userId}`);
-        reply.send(result);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        logError(`Error deleting user ID ${userId}`, error);
-        reply.status(404).send({
-          error: 'User not found',
-          message: errorMessage
-        });
-      }
-    }
+    handler: (request, reply) =>
+      UserController.deleteUser(
+        request as FastifyRequest<{ Params: { id: string } }>,
+        reply
+      ),
   });
 }
