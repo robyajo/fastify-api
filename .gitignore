@@ -23,8 +23,8 @@ build/
 logs
 *.log
 lerna-debug.log*
-# storage/img/avatar
-# storage/avatars
+storage/img/avatar
+storage/avatars
 storage/logs
 
 # Runtime data
